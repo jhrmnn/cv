@@ -1,0 +1,62 @@
+name: Build
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 5 * * *'
+jobs:
+  all:
+    name: All
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v2
+        with:
+          python-version: 3.x
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo $HOME/.local/bin >>$GITHUB_PATH
+          $HOME/.local/bin/poetry config virtualenvs.create false
+          $HOME/.local/bin/poetry config --list
+      - name: Install dependencies
+        run: sudo apt-get install -yq --no-install-suggests --no-install-recommends texlive-base texlive-xetex texlive-plain-generic texlive-fonts-recommended latexmk sshpass
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/fonts.tar.gz
+            ~/.cache/pypoetry
+          key: ${{ hashFiles('poetry.lock') }}
+      - name: Get fonts
+        run: |
+          [ -f ~/fonts.tar.gz ] || wget -nv -P ~ ${{ secrets.FONTS_URL }}
+          tar -xf ~/fonts.tar.gz
+      - run: poetry install --no-dev
+      - run: make
+        env:
+          PUBLONS_TOKEN: ${{ secrets.PUBLONS_TOKEN }}
+      - name: Install
+        run: |
+          mkdir prefix
+          cp cv.html prefix/index.html
+          cp cv.yaml cv.pdf cv.txt prefix/
+      - name: Deploy to Github
+        run: |
+          git clone --depth 1 https://x-token-auth:${{ secrets.GH_TOKEN }}@github.com/jhrmnn/jhrmnn.github.io
+          cd jhrmnn.github.io
+          git config user.email "github@id.jan.hermann.name"
+          git config user.name "Jan Hermann"
+          rsync -acv ../prefix/ ./
+          touch .nojekyll
+          echo "jan.hermann.name" >CNAME
+          git add .
+          git commit -m "update" --allow-empty
+          git push
+      - name: Deploy to FU Berlin
+        run: |
+          sshpass -p ${{ secrets.FU_PASSWORD }} \
+            rsync -av -e 'ssh -o StrictHostKeyChecking=no' \
+            prefix/ \
+            ${{ secrets.FU_USER }}@login.mi.fu-berlin.de:/web/page.mi.fu-berlin.de/web-home/${{ secrets.FU_USER }}/public_html/
